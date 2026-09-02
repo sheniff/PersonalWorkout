@@ -27,6 +27,7 @@ export function Today() {
     data: { progress, sessions, settings, exerciseStates },
     activeSessionId,
     upsertSession,
+    removeSession,
     setActiveSession,
     setProgress,
     syncStatus,
@@ -51,19 +52,36 @@ export function Today() {
   );
 
   const start = (workout: Workout) => {
-    // Resume rather than duplicate if this workout was already started.
-    const existing = sessions.find(
-      (s) =>
-        !s.completedAt &&
-        s.block === progress.block &&
-        s.phase === progress.phase &&
-        s.week === progress.week &&
-        s.workoutIndex === workout.index,
-    );
-    if (existing) {
-      setActiveSession(existing.id);
-      navigate(`/session/${existing.id}`);
+    const forThisSlot = (s: (typeof sessions)[number]) =>
+      s.block === progress.block &&
+      s.phase === progress.phase &&
+      s.week === progress.week &&
+      s.workoutIndex === workout.index;
+
+    // Already done this week: show what was logged rather than opening a second
+    // session for it. Minting one and backing out is what used to leave an
+    // empty session behind, which the next tap then resumed with a days-old
+    // timer running.
+    const done = sessions.find((s) => s.completedAt && forThisSlot(s));
+    if (done) {
+      navigate(`/history/${done.id}`);
       return;
+    }
+
+    const existing = sessions.find((s) => !s.completedAt && forThisSlot(s));
+
+    // Resume a workout genuinely in progress. One with nothing logged that was
+    // started on an earlier day is abandoned, not paused: drop it so the timer
+    // and the suggestions both start from today.
+    if (existing) {
+      const startedToday =
+        new Date(existing.startedAt).toDateString() === new Date().toDateString();
+      if (startedToday || existing.sets.some((s) => s.completed)) {
+        setActiveSession(existing.id);
+        navigate(`/session/${existing.id}`);
+        return;
+      }
+      removeSession(existing.id);
     }
 
     const session = createSession(progress, workout, exerciseStates, settings);

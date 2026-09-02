@@ -4,6 +4,7 @@ import {
   DELOAD_WEEK,
   TOTAL_PHASES,
   TRAINING_WEEKS,
+  getWorkout,
   getWorkoutsFor,
   isDeloadWeek,
 } from '../data/program';
@@ -148,6 +149,9 @@ export function planWorkout(
   includeWarmups: boolean,
 ): SetLog[] {
   const sets: SetLog[] = [];
+  // Session-global, not per-exercise: `order` is what the sets come back sorted
+  // by after a sync, so restarting it per exercise interleaved them.
+  let order = 0;
 
   for (const slot of workout.slots) {
     const exercise = getExercise(slot.slug);
@@ -156,7 +160,6 @@ export function planWorkout(
       ? suggestDeloadSet(exercise, state, unit)
       : suggestHardSet(exercise, state, unit);
 
-    let order = 0;
     const push = (planned: PlannedSet) => {
       sets.push({
         id: uid(),
@@ -182,6 +185,67 @@ export function planWorkout(
   }
 
   return sets;
+}
+
+export interface SetEntry {
+  set: SetLog;
+  /** Position in `session.sets`, which is what the edit helpers address. */
+  index: number;
+}
+
+export interface SetGroup {
+  slug: string;
+  entries: SetEntry[];
+}
+
+function sortEntries(entries: SetEntry[]): SetEntry[] {
+  return [...entries].sort((a, b) => {
+    if (a.set.kind !== b.set.kind) return a.set.kind === 'warmup' ? -1 : 1;
+    return a.index - b.index;
+  });
+}
+
+/**
+ * Sets grouped by exercise, in the order the program lists them.
+ *
+ * Deliberately *not* "consecutive runs of the same slug". A synced session
+ * arrives sorted by `set_order`, and sessions written before that counter was
+ * session-global carry one sequence per exercise — which interleaves the
+ * exercises and shatters an adjacency-based grouping into one group per set.
+ * Bucketing by slug reads those sessions correctly without a migration.
+ *
+ * Within a bucket the stored order still holds: sorting the whole array by
+ * `set_order` leaves each exercise's own sets ascending among themselves.
+ *
+ * No workout in this program lists the same exercise twice; if one ever did,
+ * its sets would merge into a single group.
+ */
+export function groupSets(session: Session): SetGroup[] {
+  const buckets = new Map<string, SetEntry[]>();
+  session.sets.forEach((set, index) => {
+    const bucket = buckets.get(set.exerciseSlug);
+    if (bucket) bucket.push({ set, index });
+    else buckets.set(set.exerciseSlug, [{ set, index }]);
+  });
+
+  const planned = getWorkout(session.phase, session.week, session.workoutIndex);
+  const groups: SetGroup[] = [];
+  const placed = new Set<string>();
+
+  for (const slot of planned?.slots ?? []) {
+    const entries = buckets.get(slot.slug);
+    if (!entries || placed.has(slot.slug)) continue;
+    placed.add(slot.slug);
+    groups.push({ slug: slot.slug, entries: sortEntries(entries) });
+  }
+
+  // Anything the program no longer lists still gets shown, in first-seen order.
+  for (const [slug, entries] of buckets) {
+    if (placed.has(slug)) continue;
+    groups.push({ slug, entries: sortEntries(entries) });
+  }
+
+  return groups;
 }
 
 export function createSession(

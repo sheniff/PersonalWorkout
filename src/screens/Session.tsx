@@ -9,6 +9,7 @@ import type { SetLog } from '../data/types';
 import { formatDuration, uid } from '../lib/format';
 import {
   applyProgressionWithinSession,
+  groupSets,
   propagateEdit,
   recomputeWarmups,
   updateExerciseStates,
@@ -52,21 +53,17 @@ export function Session() {
     if (session) setNotes(session.notes);
   }, [session?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Group consecutive sets into their exercise blocks.
-  const groups = useMemo(() => {
-    const out: { slug: string; entries: { set: SetLog; index: number }[] }[] = [];
-    session?.sets.forEach((set, index) => {
-      const last = out[out.length - 1];
-      if (last && last.slug === set.exerciseSlug) last.entries.push({ set, index });
-      else out.push({ slug: set.exerciseSlug, entries: [{ set, index }] });
-    });
-    return out;
-  }, [session?.sets]);
+  const groups = useMemo(() => (session ? groupSets(session) : []), [session]);
 
-  const activeIndex = useMemo(
-    () => session?.sets.findIndex((s) => !s.completed) ?? -1,
-    [session?.sets],
-  );
+  // "Next set" follows the order shown on screen, not the array order.
+  const activeIndex = useMemo(() => {
+    for (const group of groups) {
+      for (const entry of group.entries) {
+        if (!entry.set.completed) return entry.index;
+      }
+    }
+    return -1;
+  }, [groups]);
   const activeGroup = groups.find((g) => g.entries.some((e) => e.index === activeIndex));
   const expandedSlug = openSlug ?? activeGroup?.slug ?? groups[0]?.slug ?? null;
 
@@ -75,6 +72,12 @@ export function Session() {
   useEffect(() => {
     setOpenSlug(null);
   }, [activeGroup?.slug]);
+
+  // A finished workout belongs in history, not the live session screen — there
+  // the elapsed timer would count up from the day it was done.
+  useEffect(() => {
+    if (session?.completedAt) navigate(`/history/${session.id}`, { replace: true });
+  }, [session?.completedAt, session?.id, navigate]);
 
   useEffect(() => {
     if (!scrollPending.current) return;

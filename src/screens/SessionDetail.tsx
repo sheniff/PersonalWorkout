@@ -3,10 +3,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { IconClose } from '../components/Icons';
 import { Sheet } from '../components/Sheet';
 import { getExercise } from '../data/exercises';
-import { periodLabel } from '../data/program';
-import type { SetLog } from '../data/types';
+import { getWorkout, periodLabel } from '../data/program';
 import { formatDateTime, formatShortDuration } from '../lib/format';
-import { sessionDurationSeconds, sessionVolume } from '../lib/progression';
+import {
+  createSession,
+  groupSets,
+  sessionDurationSeconds,
+  sessionVolume,
+} from '../lib/progression';
 import { formatWeight, isTimed, usesWeight } from '../lib/units';
 import { useStore } from '../state/StoreContext';
 
@@ -14,22 +18,26 @@ export function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
-    data: { sessions, settings },
+    data: { sessions, settings, progress, exerciseStates },
     removeSession,
+    upsertSession,
+    setActiveSession,
   } = useStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const session = sessions.find((s) => s.id === id);
 
-  const groups = useMemo(() => {
-    const out: { slug: string; sets: SetLog[] }[] = [];
-    session?.sets.forEach((set) => {
-      const last = out[out.length - 1];
-      if (last && last.slug === set.exerciseSlug) last.sets.push(set);
-      else out.push({ slug: set.exerciseSlug, sets: [set] });
-    });
-    return out;
-  }, [session]);
+  const repeat = () => {
+    if (!session) return;
+    const workout = getWorkout(session.phase, session.week, session.workoutIndex);
+    if (!workout) return;
+    const fresh = createSession(progress, workout, exerciseStates, settings);
+    upsertSession(fresh);
+    setActiveSession(fresh.id);
+    navigate(`/session/${fresh.id}`);
+  };
+
+  const groups = useMemo(() => (session ? groupSets(session) : []), [session]);
 
   if (!session) {
     return (
@@ -100,13 +108,19 @@ export function SessionDetail() {
         {groups.map((group, i) => {
           const exercise = getExercise(group.slug);
           const timed = isTimed(exercise.load);
+          // Hard sets are numbered on their own; warm-ups don't consume a number.
+          let hardCount = 0;
+          const rows = group.entries.map(({ set }) => ({
+            set,
+            label: set.kind === 'warmup' ? 'Warm-up' : `Set ${(hardCount += 1)}`,
+          }));
           return (
             <div key={`${group.slug}-${i}`} className="card card--tight">
               <div className="row-between" style={{ marginBottom: 8 }}>
                 <div className="exercise-title">{exercise.name}</div>
               </div>
               <div className="stack" style={{ gap: 6 }}>
-                {group.sets.map((set, index) => (
+                {rows.map(({ set, label }, index) => (
                   <div
                     key={set.id}
                     className="row-between"
@@ -120,7 +134,7 @@ export function SessionDetail() {
                       className="chip"
                       style={{ minWidth: 52, justifyContent: 'center' }}
                     >
-                      {set.kind === 'warmup' ? 'Warm-up' : `Set ${index + 1}`}
+                      {label}
                     </span>
                     <span className="num" style={{ fontWeight: 620 }}>
                       {usesWeight(exercise.load) && set.weight != null
@@ -137,14 +151,18 @@ export function SessionDetail() {
         })}
       </div>
 
-      <button
-        type="button"
-        className="btn btn--danger btn--block"
-        style={{ marginTop: 20 }}
-        onClick={() => setConfirmDelete(true)}
-      >
-        Delete workout
-      </button>
+      <div className="stack" style={{ marginTop: 20 }}>
+        <button type="button" className="btn btn--ghost btn--block" onClick={repeat}>
+          Do this workout again
+        </button>
+        <button
+          type="button"
+          className="btn btn--danger btn--block"
+          onClick={() => setConfirmDelete(true)}
+        >
+          Delete workout
+        </button>
+      </div>
 
       <Sheet
         open={confirmDelete}
