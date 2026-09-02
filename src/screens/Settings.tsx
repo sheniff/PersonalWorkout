@@ -3,6 +3,7 @@ import { Sheet } from '../components/Sheet';
 import { Stepper } from '../components/Stepper';
 import { DELOAD_WEEK, TOTAL_PHASES, periodLabel } from '../data/program';
 import type { Unit } from '../data/types';
+import { isAbandoned } from '../lib/progression';
 import { cloudEnabled } from '../lib/supabase';
 import { useStore } from '../state/StoreContext';
 
@@ -29,6 +30,8 @@ function Toggle({
 export function Settings() {
   const {
     data: { settings, progress, sessions },
+    activeSessionId,
+    purgeAbandoned,
     setSettings,
     setProgress,
     user,
@@ -50,6 +53,11 @@ export function Settings() {
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purged, setPurged] = useState<number | null>(null);
+
+  // The workout currently open is never a candidate, even before its first set.
+  const abandoned = sessions.filter((s) => isAbandoned(s) && s.id !== activeSessionId);
 
   const download = () => {
     const blob = new Blob([exportData()], { type: 'application/json' });
@@ -380,6 +388,33 @@ export function Settings() {
             Download
           </button>
         </div>
+        {abandoned.length > 0 ? (
+          <div className="setting">
+            <div>
+              <div className="setting-label">Abandoned workouts</div>
+              <div className="setting-help">
+                {abandoned.length} session{abandoned.length === 1 ? '' : 's'} opened but never
+                logged. Nothing you finished is affected.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn--sm btn--ghost"
+              onClick={() => setConfirmPurge(true)}
+            >
+              Clean up
+            </button>
+          </div>
+        ) : purged !== null ? (
+          <div className="setting">
+            <div>
+              <div className="setting-label">Cleaned up</div>
+              <div className="setting-help">
+                Removed {purged} abandoned session{purged === 1 ? '' : 's'}.
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="setting">
           <div>
             <div className="setting-label">Reset everything</div>
@@ -398,6 +433,37 @@ export function Settings() {
       <p className="setting-help" style={{ marginTop: 22, textAlign: 'center' }}>
         Bigger Leaner Stronger 5-day routine · 6 phases × 4 weeks + deload
       </p>
+
+      <Sheet
+        open={confirmPurge}
+        onClose={() => setConfirmPurge(false)}
+        title={`Remove ${abandoned.length} abandoned workout${abandoned.length === 1 ? '' : 's'}?`}
+      >
+        <p className="sheet-text">
+          These were opened but never logged a single set, so there is nothing in them to lose.
+          They are deleted here and in the cloud. Finished workouts and anything in progress are
+          untouched.
+        </p>
+        <div className="stack">
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={() => {
+              setPurged(purgeAbandoned(activeSessionId));
+              setConfirmPurge(false);
+            }}
+          >
+            Remove them
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--block"
+            onClick={() => setConfirmPurge(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      </Sheet>
 
       <Sheet open={confirmReset} onClose={() => setConfirmReset(false)} title="Reset this device?">
         <p className="sheet-text">

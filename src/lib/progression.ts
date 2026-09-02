@@ -463,6 +463,16 @@ export function blockProgress(progress: Progress): number {
   return completed / (TOTAL_PHASES * weeksPerPhase);
 }
 
+/**
+ * A workout that was opened and walked away from: still unfinished, with not a
+ * single set logged. These carry nothing worth keeping, and before the Today
+ * screen stopped minting them they accumulated every time a finished workout
+ * was tapped.
+ */
+export function isAbandoned(session: Session): boolean {
+  return !session.completedAt && !session.sets.some((s) => s.completed);
+}
+
 export function sessionVolume(session: Session): number {
   return session.sets.reduce((total, set) => {
     if (!set.completed || set.kind !== 'hard') return total;

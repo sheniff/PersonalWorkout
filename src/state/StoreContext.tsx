@@ -16,6 +16,7 @@ import {
   saveActiveSessionId,
   saveLocal,
 } from '../lib/localStore';
+import { isAbandoned } from '../lib/progression';
 import * as remote from '../lib/remote';
 import { cloudEnabled, supabase } from '../lib/supabase';
 
@@ -40,6 +41,8 @@ interface StoreValue {
   removeSession: (sessionId: string) => void;
   setExerciseStates: (states: Record<string, ExerciseState>) => void;
   setActiveSession: (sessionId: string | null) => void;
+  /** Deletes every abandoned session except `keepId`. Returns how many went. */
+  purgeAbandoned: (keepId: string | null) => number;
 
   signIn: (email: string) => Promise<{ error?: string }>;
   verifyCode: (email: string, code: string) => Promise<{ error?: string }>;
@@ -151,7 +154,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     for (const id of [...dirtySessions.current]) {
       const session = current.sessions.find((s) => s.id === id);
-      if (!session) {
+      // Never upload a session with nothing logged in it. Besides being noise,
+      // this is what would resurrect cleaned-up ghosts from a second device
+      // that still had them locally.
+      if (!session || isAbandoned(session)) {
         dirtySessions.current.delete(id);
         continue;
       }
@@ -192,6 +198,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Anything local that the server does not have (or has an older copy of)
       // goes up on this same pass.
       for (const session of merged.sessions) {
+        if (isAbandoned(session)) continue;
         const remoteCopy = incoming.sessions.find((s) => s.id === session.id);
         if (!remoteCopy || newer(session.updatedAt, remoteCopy.updatedAt)) {
           dirtySessions.current.add(session.id);
@@ -311,6 +318,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [persist],
   );
 
+  const purgeAbandoned = useCallback(
+    (keepId: string | null) => {
+      const doomed = new Set(
+        dataRef.current.sessions
+          .filter((s) => isAbandoned(s) && s.id !== keepId)
+          .map((s) => s.id),
+      );
+      if (doomed.size === 0) return 0;
+
+      for (const id of doomed) {
+        dirtySessions.current.delete(id);
+        deletedSessions.current.add(id);
+      }
+      persist({
+        ...dataRef.current,
+        sessions: dataRef.current.sessions.filter((s) => !doomed.has(s.id)),
+      });
+      return doomed.size;
+    },
+    [persist],
+  );
+
   const setExerciseStates = useCallback(
     (states: Record<string, ExerciseState>) => {
       for (const slug of Object.keys(states)) {
@@ -386,6 +415,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       removeSession,
       setExerciseStates,
       setActiveSession,
+      purgeAbandoned,
       signIn,
       verifyCode,
       signOut,
@@ -406,6 +436,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       removeSession,
       setExerciseStates,
       setActiveSession,
+      purgeAbandoned,
       signIn,
       verifyCode,
       signOut,
