@@ -140,12 +140,23 @@ export async function pullAll(client: SupabaseClient, userId: string): Promise<A
   }
 
   const p = profile.data as Record<string, unknown> | null;
+
+  // The sign-up trigger creates the profile row with `updated_at = now()` and
+  // an empty settings blob. That timestamp would otherwise look newer than a
+  // device that has been tracking for weeks, and the merge would hand it a
+  // reset program position. An empty settings blob means the app has never
+  // written this row, so it is dated to the epoch and always loses.
+  const profileWritten =
+    p != null && Object.keys((p.settings as Record<string, unknown>) ?? {}).length > 0;
+
   const progress: Progress = p
     ? {
         block: (p.block as number) ?? DEFAULT_PROGRESS.block,
         phase: (p.phase as number) ?? DEFAULT_PROGRESS.phase,
         week: (p.week as number) ?? DEFAULT_PROGRESS.week,
-        updatedAt: (p.updated_at as string) ?? DEFAULT_PROGRESS.updatedAt,
+        updatedAt: profileWritten
+          ? ((p.updated_at as string) ?? DEFAULT_PROGRESS.updatedAt)
+          : DEFAULT_PROGRESS.updatedAt,
       }
     : { ...DEFAULT_PROGRESS };
 

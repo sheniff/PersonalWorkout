@@ -1011,6 +1011,18 @@ a {
   line-height: 1.45;
 }
 
+.code-input {
+  text-align: center;
+  font-size: 30px;
+  font-weight: 720;
+  letter-spacing: 0.28em;
+  /* The tracking is applied after each glyph, including the last — nudge the
+     text back so it reads as centred. */
+  text-indent: 0.28em;
+  font-variant-numeric: tabular-nums;
+  min-height: 62px;
+}
+
 .setting {
   display: flex;
   align-items: center;

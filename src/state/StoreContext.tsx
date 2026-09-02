@@ -42,6 +42,7 @@ interface StoreValue {
   setActiveSession: (sessionId: string | null) => void;
 
   signIn: (email: string) => Promise<{ error?: string }>;
+  verifyCode: (email: string, code: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
   syncNow: () => Promise<void>;
   exportData: () => string;
@@ -336,6 +337,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return error ? { error: error.message } : {};
   }, []);
 
+  /**
+   * Code entry, rather than following the emailed link.
+   *
+   * On iOS a home-screen PWA has its own storage container, and a link from
+   * Mail always opens in the browser — so a magic link signs you into the
+   * browser and leaves the installed app logged out, with no way to hand the
+   * session across. Typing the code keeps the whole exchange inside whichever
+   * container the user is actually in.
+   */
+  const verifyCode = useCallback(async (email: string, code: string) => {
+    if (!supabase) return { error: 'Cloud sync is not configured.' };
+    const token = code.replace(/\D/g, '');
+    if (token.length < 6) return { error: 'Enter the 6-digit code from the email.' };
+
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+    if (!error) return {};
+
+    // A first-ever sign-in on a new account is issued as a signup token.
+    const retry = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
+    return retry.error ? { error: error.message } : {};
+  }, []);
+
   const signOut = useCallback(async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
@@ -364,6 +387,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setExerciseStates,
       setActiveSession,
       signIn,
+      verifyCode,
       signOut,
       syncNow,
       exportData,
@@ -383,6 +407,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setExerciseStates,
       setActiveSession,
       signIn,
+      verifyCode,
       signOut,
       syncNow,
       exportData,

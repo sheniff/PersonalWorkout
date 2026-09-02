@@ -35,6 +35,7 @@ export function Settings() {
     syncStatus,
     syncError,
     signIn,
+    verifyCode,
     signOut,
     syncNow,
     exportData,
@@ -42,8 +43,12 @@ export function Settings() {
   } = useStore();
 
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [authError, setAuthError] = useState(false);
   const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const download = () => {
@@ -63,7 +68,25 @@ export function Settings() {
     setAuthMessage(null);
     const { error } = await signIn(email.trim());
     setSending(false);
-    setAuthMessage(error ?? 'Check your inbox for the sign-in link.');
+    setAuthError(Boolean(error));
+    setAuthMessage(error ?? `We sent a 6-digit code to ${email.trim()}.`);
+    if (!error) setCodeSent(true);
+  };
+
+  const submitCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setVerifying(true);
+    setAuthMessage(null);
+    const { error } = await verifyCode(email.trim(), code);
+    setVerifying(false);
+    setAuthError(Boolean(error));
+    if (error) {
+      setAuthMessage(error);
+      return;
+    }
+    setCode('');
+    setCodeSent(false);
+    setAuthMessage(null);
   };
 
   return (
@@ -251,14 +274,73 @@ export function Settings() {
               </button>
             </div>
           </>
+        ) : codeSent ? (
+          <form onSubmit={submitCode}>
+            <div className="setting-label" style={{ marginBottom: 4 }}>
+              Enter your code
+            </div>
+            <div className="setting-help" style={{ marginBottom: 12 }}>
+              Typing the code signs you in right here. Tapping the link in the email would open
+              your browser instead, which on iOS is a different app to this one.
+            </div>
+            <input
+              className="input code-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              maxLength={6}
+              placeholder="000000"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              style={{ marginBottom: 10 }}
+            />
+            <button
+              type="submit"
+              className="btn btn--primary btn--block"
+              disabled={verifying || code.length < 6}
+            >
+              {verifying ? 'Signing in…' : 'Sign in'}
+            </button>
+            <div className="row" style={{ marginTop: 10, justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn--sm btn--ghost"
+                onClick={submitEmail}
+                disabled={sending}
+              >
+                {sending ? 'Sending…' : 'Resend code'}
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm btn--ghost"
+                onClick={() => {
+                  setCodeSent(false);
+                  setCode('');
+                  setAuthMessage(null);
+                  setAuthError(false);
+                }}
+              >
+                Change email
+              </button>
+            </div>
+            {authMessage ? (
+              <p
+                className="setting-help"
+                style={{ marginTop: 10, color: authError ? 'var(--danger)' : undefined }}
+              >
+                {authMessage}
+              </p>
+            ) : null}
+          </form>
         ) : (
           <form onSubmit={submitEmail}>
             <div className="setting-label" style={{ marginBottom: 4 }}>
               Sign in to sync
             </div>
             <div className="setting-help" style={{ marginBottom: 12 }}>
-              We email you a link — no password to remember. Your workouts stay on this device
-              either way.
+              We email you a 6-digit code — no password to remember. Your workouts stay on this
+              device either way.
             </div>
             <input
               className="input"
@@ -271,10 +353,13 @@ export function Settings() {
               style={{ marginBottom: 10 }}
             />
             <button type="submit" className="btn btn--primary btn--block" disabled={sending}>
-              {sending ? 'Sending…' : 'Email me a link'}
+              {sending ? 'Sending…' : 'Email me a code'}
             </button>
             {authMessage ? (
-              <p className="setting-help" style={{ marginTop: 10 }}>
+              <p
+                className="setting-help"
+                style={{ marginTop: 10, color: authError ? 'var(--danger)' : undefined }}
+              >
                 {authMessage}
               </p>
             ) : null}

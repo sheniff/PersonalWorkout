@@ -75,11 +75,31 @@ To enable sync across devices:
 2. Open **SQL Editor → New query**, paste `supabase/schema.sql`, run it.
 3. Copy `.env.example` to `.env` and fill in the URL and anon key from
    **Project Settings → API**.
-4. Restart the dev server, then sign in from the Settings tab. Auth is a magic
-   link — no password.
+4. Put a **6-digit code** in the sign-in email — see below. This step is not
+   optional if you use the app from an iOS home screen.
+5. Restart the dev server, then sign in from the Settings tab.
 
 The anon key is meant to be public; every table is locked to `auth.uid()` by the
 row-level security policies in the schema.
+
+### Sign in with a code, not just a link
+
+In Supabase, open **Authentication → Emails → Magic Link** and make sure the
+template includes `{{ .Token }}`:
+
+```html
+<h2>Sign in to Workout</h2>
+<p>Your code:</p>
+<p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
+<p>Or <a href="{{ .ConfirmationURL }}">tap here to sign in</a> — browser only.</p>
+```
+
+Keeping both means desktop users can click the link and the app can offer code
+entry. **The code is what makes the installed app usable:** on iOS a
+home-screen PWA runs in its own storage container, and a link tapped in Mail
+always opens the browser — so a magic link signs you into Safari and leaves the
+installed app logged out, with no supported way to pass the session across.
+Typing the code keeps the whole exchange inside the app.
 
 ## Deploying to Netlify
 
