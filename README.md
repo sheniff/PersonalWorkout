@@ -29,6 +29,15 @@ performed, not just the target, along with the timestamp. History shows every
 session with its date, duration, sets and total volume; Progress charts the
 trend of your best set per exercise.
 
+**Three things that save time on the floor.** Each hard set shows what you did
+last time under its set number, so the suggestion has context. Barbell
+exercises show the plates to load per side for the set you are about to do —
+warm-ups included, which is where the arithmetic is most annoying — and say so
+when your plates cannot make the number exactly. And any exercise can be
+swapped for another when the machine is taken; the swap sticks to that slot in
+that workout, brings its own history and suggestions, and is undone by swapping
+back.
+
 **Built for a gym floor.** Warm-up ramp (50/50/70/90% of the working weight),
 rest timer that starts on its own when you tick a set off, screen wake-lock, and
 a layout where the only things you tap mid-set are big −/+ buttons and a
@@ -131,17 +140,14 @@ suggestion engine and the phase/week arithmetic, with no React in it.
 
 Roughly in order of what would pay off most:
 
-- **Plate calculator.** Tap the weight to see which plates to load per side.
 - **Rep-quality tracking (RIR).** One tap per hard set; makes the auto-progression
   a lot smarter than "did you hit 6".
-- **Exercise substitutions.** The gym's leg curl is taken — swap for an
-  alternative, remembered per exercise.
 - **Body weight and measurements** alongside lift progress.
 - **Rest-timer notifications** via the service worker, so it buzzes with the app
   backgrounded.
 - **Apple Health / Google Fit export.**
-- **Previous-session column** in the set row, so last time's numbers sit next to
-  today's.
+- **Repeat last week's numbers** on deload weeks, where the suggestions matter
+  least and the tapping is pure busywork.
 
 ## Credit
 

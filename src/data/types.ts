@@ -126,6 +126,16 @@ export interface Settings {
   keepScreenAwake: boolean;
   /** Show the warm-up ramp expanded by default. */
   showWarmups: boolean;
+  /** Weight of an empty barbell, for the plate breakdown. */
+  barWeight: number;
+  /** Plate denominations available, heaviest first. Per unit. */
+  platesKg: number[];
+  platesLb: number[];
+  /**
+   * Swapped-in exercises, keyed by `<workoutId>:<slotIndex>` — the slot rather
+   * than the exercise, so a swap sticks to that position in that workout only.
+   */
+  substitutions: Record<string, string>;
 }
 
 export interface AppData {

@@ -17,6 +17,10 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartRest: true,
   keepScreenAwake: true,
   showWarmups: true,
+  barWeight: 20,
+  platesKg: [25, 20, 15, 10, 5, 2.5, 1.25],
+  platesLb: [45, 35, 25, 10, 5, 2.5],
+  substitutions: {},
 };
 
 export function emptyData(): AppData {

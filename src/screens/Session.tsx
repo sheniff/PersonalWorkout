@@ -4,17 +4,29 @@ import { IconCheck, IconChevronDown, IconClose } from '../components/Icons';
 import { RestBar } from '../components/RestBar';
 import { SetRow } from '../components/SetRow';
 import { Sheet } from '../components/Sheet';
-import { getExercise } from '../data/exercises';
-import type { SetLog } from '../data/types';
+import { ALL_EXERCISES, MUSCLE_LABELS, getExercise } from '../data/exercises';
+import { getWorkout } from '../data/program';
+import type { Exercise, Settings, SetLog, Unit } from '../data/types';
 import { formatDuration, uid } from '../lib/format';
+import { calculatePlates, formatPlates, hasPlateLoad, platesFor } from '../lib/plates';
 import {
   applyProgressionWithinSession,
   groupSets,
+  previousHardSets,
   propagateEdit,
   recomputeWarmups,
+  replaceExercise,
+  slotKey,
   updateExerciseStates,
+  type SetEntry,
 } from '../lib/progression';
-import { formatWeight, isTimed, usesWeight } from '../lib/units';
+import {
+  convertWeight,
+  formatWeight,
+  formatWeightNumber,
+  isTimed,
+  usesWeight,
+} from '../lib/units';
 import { useStore } from '../state/StoreContext';
 import { useElapsed, useRestTimer, useWakeLock } from '../state/useRestTimer';
 
@@ -27,6 +39,7 @@ export function Session() {
     removeSession,
     setExerciseStates,
     setActiveSession,
+    setSettings,
   } = useStore();
 
   const session = sessions.find((s) => s.id === id);
@@ -35,6 +48,8 @@ export function Session() {
   const [showWarmups, setShowWarmups] = useState<Record<string, boolean>>({});
   const [finishOpen, setFinishOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [swapSlug, setSwapSlug] = useState<string | null>(null);
+  const [swapQuery, setSwapQuery] = useState('');
   const [notes, setNotes] = useState('');
 
   const elapsed = useElapsed(session?.startedAt ?? null);
@@ -54,6 +69,16 @@ export function Session() {
   }, [session?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groups = useMemo(() => (session ? groupSets(session) : []), [session]);
+
+  // Last time's hard sets, per exercise in this workout.
+  const previous = useMemo(() => {
+    const map: Record<string, SetLog[]> = {};
+    if (!session) return map;
+    for (const group of groups) {
+      map[group.slug] = previousHardSets(sessions, group.slug, session.id);
+    }
+    return map;
+  }, [groups, sessions, session?.id]);
 
   // "Next set" follows the order shown on screen, not the array order.
   const activeIndex = useMemo(() => {
@@ -179,6 +204,47 @@ export function Session() {
     if (hardCount <= 1) return;
     updateSets(session.sets.filter((_, i) => i !== last.index));
   };
+
+  /**
+   * Swap the exercise in a slot. The choice is remembered against the slot, so
+   * every future run of this workout plans with it until it is swapped back.
+   */
+  const applySwap = (toSlug: string) => {
+    if (!swapSlug) return;
+    const groupIndex = groups.findIndex((g) => g.slug === swapSlug);
+    const workout = getWorkout(session.phase, session.week, session.workoutIndex);
+    const slot = workout?.slots[groupIndex];
+
+    if (toSlug !== swapSlug) {
+      updateSets(replaceExercise(session, swapSlug, toSlug, exerciseStates, settings));
+    }
+
+    if (workout && slot) {
+      const key = slotKey(workout.id, groupIndex);
+      const next = { ...settings.substitutions };
+      if (toSlug === slot.slug) delete next[key];
+      else next[key] = toSlug;
+      setSettings({ substitutions: next });
+    }
+
+    // Keep the slot open on the exercise that just replaced it, rather than
+    // collapsing because the slug it was keyed to no longer exists.
+    setOpenSlug(toSlug);
+    setSwapSlug(null);
+    setSwapQuery('');
+  };
+
+  const swapCandidates = useMemo(() => {
+    if (!swapSlug) return [];
+    const current = getExercise(swapSlug);
+    const query = swapQuery.trim().toLowerCase();
+    const inSession = new Set(groups.map((g) => g.slug));
+    return ALL_EXERCISES.filter((e) => {
+      if (e.slug !== swapSlug && inSession.has(e.slug)) return false;
+      if (query) return e.name.toLowerCase().includes(query);
+      return e.muscle === current.muscle;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [swapSlug, swapQuery, groups]);
 
   const finish = () => {
     const completed = {
@@ -308,6 +374,12 @@ export function Session() {
                   <div className="exercise-body">
                     {exercise.cue ? <p className="exercise-cue">{exercise.cue}</p> : null}
 
+                    <PlateStrip
+                      exercise={exercise}
+                      entries={group.entries}
+                      settings={settings}
+                    />
+
                     {warmEntries.length > 0 ? (
                       <>
                         <button
@@ -349,12 +421,17 @@ export function Session() {
                         label={String(i + 1)}
                         active={entry.index === activeIndex}
                         showLabels={i === 0 && (warmEntries.length === 0 || !warmVisible)}
+                        previous={formatPrevious(
+                          previous[group.slug]?.[i],
+                          exercise,
+                          settings.unit,
+                        )}
                         onChange={(patch) => editSet(entry.index, patch)}
                         onToggle={() => toggleSet(entry.index)}
                       />
                     ))}
 
-                    <div className="row" style={{ marginTop: 2 }}>
+                    <div className="row" style={{ marginTop: 2, flexWrap: 'wrap' }}>
                       <button
                         type="button"
                         className="btn btn--sm btn--ghost"
@@ -362,6 +439,18 @@ export function Session() {
                       >
                         + Add set
                       </button>
+                      {group.entries.every((e) => !e.set.completed) ? (
+                        <button
+                          type="button"
+                          className="btn btn--sm btn--ghost"
+                          onClick={() => {
+                            setSwapSlug(group.slug);
+                            setSwapQuery('');
+                          }}
+                        >
+                          Swap
+                        </button>
+                      ) : null}
                       {hardEntries.length > 1 ? (
                         <button
                           type="button"
@@ -433,6 +522,63 @@ export function Session() {
         </div>
       </Sheet>
 
+      <Sheet
+        open={swapSlug !== null}
+        onClose={() => setSwapSlug(null)}
+        title={swapSlug ? `Instead of ${getExercise(swapSlug).name}` : 'Swap exercise'}
+      >
+        <p className="sheet-text">
+          The swap is remembered for this slot, so the workout plans with it next time too. Its
+          own history and suggested weights come with it.
+        </p>
+        <input
+          className="input"
+          type="search"
+          placeholder="Search all exercises…"
+          value={swapQuery}
+          onChange={(e) => setSwapQuery(e.target.value)}
+          style={{ marginBottom: 12 }}
+        />
+        <div className="stack" style={{ gap: 8 }}>
+          {swapCandidates.map((candidate) => {
+            const state = exerciseStates[candidate.slug];
+            const isCurrent = candidate.slug === swapSlug;
+            const slotOriginal =
+              getWorkout(session.phase, session.week, session.workoutIndex)?.slots[
+                groups.findIndex((g) => g.slug === swapSlug)
+              ]?.slug;
+            return (
+              <button
+                key={candidate.slug}
+                type="button"
+                className="workout-row"
+                onClick={() => applySwap(candidate.slug)}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span className="workout-name">{candidate.name}</span>
+                  <span className="workout-sub" style={{ display: 'block' }}>
+                    {MUSCLE_LABELS[candidate.muscle]} · {candidate.repRange[0]}–
+                    {candidate.repRange[1]}
+                    {isTimed(candidate.load) ? 's' : ' reps'}
+                    {state?.lastWeight != null
+                      ? ` · last ${formatWeight(state.lastWeight, state.unit)}`
+                      : ''}
+                  </span>
+                </span>
+                {isCurrent ? (
+                  <span className="chip chip--accent">Current</span>
+                ) : candidate.slug === slotOriginal ? (
+                  <span className="chip">Program</span>
+                ) : null}
+              </button>
+            );
+          })}
+          {swapCandidates.length === 0 ? (
+            <p className="setting-help">No exercises match “{swapQuery}”.</p>
+          ) : null}
+        </div>
+      </Sheet>
+
       <Sheet open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard this workout?">
         <p className="sheet-text">
           Everything logged in this session is deleted and your program position stays where it is.
@@ -451,5 +597,57 @@ export function Session() {
         </div>
       </Sheet>
     </>
+  );
+}
+
+/** Last time's numbers for one set, compact enough for the set-number cell. */
+function formatPrevious(
+  set: SetLog | undefined,
+  exercise: Exercise,
+  unit: Unit,
+): string | undefined {
+  if (!set || set.reps == null) return undefined;
+  if (!usesWeight(exercise.load) || set.weight == null || set.weight === 0) {
+    return `×${set.reps}`;
+  }
+  const weight = convertWeight(set.weight, set.unit, unit);
+  return `${formatWeightNumber(weight)}×${set.reps}`;
+}
+
+/** What to put on the bar for the set you are about to do. */
+function PlateStrip({
+  exercise,
+  entries,
+  settings,
+}: {
+  exercise: Exercise;
+  entries: SetEntry[];
+  settings: Settings;
+}) {
+  if (!hasPlateLoad(exercise.load)) return null;
+
+  const next = entries.find((e) => !e.set.completed) ?? entries[entries.length - 1];
+  const weight = next?.set.weight;
+  if (weight == null || weight <= 0) return null;
+
+  const load = calculatePlates(weight, settings.barWeight, platesFor(settings.unit, settings));
+  if (!load) {
+    return (
+      <p className="plate-strip">
+        Below the {formatWeight(settings.barWeight, settings.unit)} bar.
+      </p>
+    );
+  }
+
+  return (
+    <p className="plate-strip">
+      <span className="plate-strip-label">Per side</span>
+      <span className="num">{formatPlates(load)}</span>
+      {load.shortBy > 0 ? (
+        <span className="plate-strip-warn num">
+          · {formatWeightNumber(load.achievable)} with your plates
+        </span>
+      ) : null}
+    </p>
   );
 }

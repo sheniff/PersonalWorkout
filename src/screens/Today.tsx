@@ -18,6 +18,7 @@ import {
   createSession,
   isWeekComplete,
   nextWorkout,
+  resolveSlot,
 } from '../lib/progression';
 import { useStore } from '../state/StoreContext';
 
@@ -142,11 +143,12 @@ export function Today() {
           </p>
 
           <ul className="hero-list">
-            {suggested.slots.map((slot) => {
-              const exercise = getExercise(slot.slug);
-              const state = exerciseStates[slot.slug];
+            {suggested.slots.map((slot, i) => {
+              const slug = resolveSlot(suggested.id, i, slot.slug, settings.substitutions);
+              const exercise = getExercise(slug);
+              const state = exerciseStates[slug];
               return (
-                <li key={slot.slug}>
+                <li key={`${slot.slug}-${i}`}>
                   <strong>{exercise.name}</strong>
                   <span className="num">
                     {state?.lastWeight != null
@@ -221,7 +223,13 @@ export function Today() {
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span className="workout-name">{w.name}</span>
                 <span className="workout-sub" style={{ display: 'block' }}>
-                  {w.slots.map((s) => getExercise(s.slug).name.split(' (')[0]).join(' · ')}
+                  {w.slots
+                    .map((s, i) =>
+                      getExercise(
+                        resolveSlot(w.id, i, s.slug, settings.substitutions),
+                      ).name.split(' (')[0],
+                    )
+                    .join(' · ')}
                 </span>
               </span>
               <IconChevronRight />

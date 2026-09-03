@@ -1,4 +1,4 @@
-import { getExercise } from '../data/exercises';
+import { EXERCISES, getExercise } from '../data/exercises';
 import {
   DELOAD_REPS,
   DELOAD_WEEK,
@@ -141,21 +141,39 @@ function suggestDeloadSet(
   };
 }
 
+/** The key a swap is remembered under: this slot, in this workout. */
+export function slotKey(workoutId: string, slotIndex: number): string {
+  return `${workoutId}:${slotIndex}`;
+}
+
+/** The exercise actually being done in a slot, after any swap. */
+export function resolveSlot(
+  workoutId: string,
+  slotIndex: number,
+  slug: string,
+  substitutions: Record<string, string>,
+): string {
+  const swapped = substitutions[slotKey(workoutId, slotIndex)];
+  return swapped && EXERCISES[swapped] ? swapped : slug;
+}
+
 export function planWorkout(
   workout: Workout,
   isDeload: boolean,
   states: Record<string, ExerciseState>,
   unit: Unit,
   includeWarmups: boolean,
+  substitutions: Record<string, string> = {},
 ): SetLog[] {
   const sets: SetLog[] = [];
   // Session-global, not per-exercise: `order` is what the sets come back sorted
   // by after a sync, so restarting it per exercise interleaved them.
   let order = 0;
 
-  for (const slot of workout.slots) {
-    const exercise = getExercise(slot.slug);
-    const state = states[slot.slug];
+  for (const [slotIndex, slot] of workout.slots.entries()) {
+    const slug = resolveSlot(workout.id, slotIndex, slot.slug, substitutions);
+    const exercise = getExercise(slug);
+    const state = states[slug];
     const suggestion = isDeload
       ? suggestDeloadSet(exercise, state, unit)
       : suggestHardSet(exercise, state, unit);
@@ -163,7 +181,7 @@ export function planWorkout(
     const push = (planned: PlannedSet) => {
       sets.push({
         id: uid(),
-        exerciseSlug: slot.slug,
+        exerciseSlug: slug,
         order: order++,
         kind: planned.kind,
         targetReps: planned.reps,
@@ -229,23 +247,27 @@ export function groupSets(session: Session): SetGroup[] {
   });
 
   const planned = getWorkout(session.phase, session.week, session.workoutIndex);
-  const groups: SetGroup[] = [];
-  const placed = new Set<string>();
+  const slotRank = new Map<string, number>();
+  (planned?.slots ?? []).forEach((slot, i) => {
+    if (!slotRank.has(slot.slug)) slotRank.set(slot.slug, i);
+  });
 
-  for (const slot of planned?.slots ?? []) {
-    const entries = buckets.get(slot.slug);
-    if (!entries || placed.has(slot.slug)) continue;
-    placed.add(slot.slug);
-    groups.push({ slug: slot.slug, entries: sortEntries(entries) });
-  }
-
-  // Anything the program no longer lists still gets shown, in first-seen order.
-  for (const [slug, entries] of buckets) {
-    if (placed.has(slug)) continue;
-    groups.push({ slug, entries: sortEntries(entries) });
-  }
-
-  return groups;
+  return [...buckets.entries()]
+    .map(([slug, entries], appearance) => ({
+      slug,
+      entries: sortEntries(entries),
+      // `order` is session-global on current data, so its minimum recovers the
+      // program order without matching slugs — which is what lets a substituted
+      // exercise stay in its slot. Legacy sessions numbered per exercise, so
+      // every minimum is 0 and the slot rank breaks the tie instead.
+      rank: Math.min(...entries.map((e) => e.set.order)),
+      slotRank: slotRank.get(slug) ?? Number.MAX_SAFE_INTEGER,
+      appearance,
+    }))
+    .sort(
+      (a, b) => a.rank - b.rank || a.slotRank - b.slotRank || a.appearance - b.appearance,
+    )
+    .map(({ slug, entries }) => ({ slug, entries }));
 }
 
 export function createSession(
@@ -268,9 +290,101 @@ export function createSession(
     startedAt: now,
     completedAt: null,
     notes: '',
-    sets: planWorkout(workout, deload, states, settings.unit, settings.showWarmups),
+    sets: planWorkout(
+      workout,
+      deload,
+      states,
+      settings.unit,
+      settings.showWarmups,
+      settings.substitutions,
+    ),
     updatedAt: now,
   };
+}
+
+/**
+ * The hard sets from the last time this exercise was trained, so today's
+ * targets can be read against what actually happened.
+ */
+export function previousHardSets(
+  sessions: Session[],
+  slug: string,
+  excludeSessionId: string,
+): SetLog[] {
+  const prior = sessions
+    .filter(
+      (s) =>
+        s.completedAt &&
+        s.id !== excludeSessionId &&
+        s.sets.some((x) => x.exerciseSlug === slug && x.kind === 'hard' && x.completed),
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.completedAt ?? b.startedAt).getTime() -
+        new Date(a.completedAt ?? a.startedAt).getTime(),
+    )[0];
+
+  if (!prior) return [];
+  const group = groupSets(prior).find((g) => g.slug === slug);
+  return (group?.entries ?? [])
+    .filter((e) => e.set.kind === 'hard' && e.set.completed)
+    .map((e) => e.set);
+}
+
+/**
+ * Swap one exercise for another inside a session, re-planning its sets from the
+ * new exercise's own history and rep range. Only ever called for an exercise
+ * with nothing logged yet, so no performed work is discarded.
+ */
+export function replaceExercise(
+  session: Session,
+  fromSlug: string,
+  toSlug: string,
+  states: Record<string, ExerciseState>,
+  settings: Settings,
+): SetLog[] {
+  const group = groupSets(session).find((g) => g.slug === fromSlug);
+  if (!group || group.entries.length === 0) return session.sets;
+
+  const exercise = getExercise(toSlug);
+  const state = states[toSlug];
+  const suggestion = session.isDeload
+    ? suggestDeloadSet(exercise, state, settings.unit)
+    : suggestHardSet(exercise, state, settings.unit);
+
+  const hardCount = group.entries.filter((e) => e.set.kind === 'hard').length;
+  const hadWarmup = group.entries.some((e) => e.set.kind === 'warmup');
+
+  const planned: PlannedSet[] = [
+    ...(hadWarmup ? buildWarmups(exercise, suggestion.weight, settings.unit) : []),
+    ...Array.from({ length: Math.max(1, hardCount) }, () => ({
+      kind: 'hard' as const,
+      reps: suggestion.reps,
+      weight: suggestion.weight,
+    })),
+  ];
+
+  const replacements: SetLog[] = planned.map((p) => ({
+    id: uid(),
+    exerciseSlug: toSlug,
+    order: 0,
+    kind: p.kind,
+    targetReps: p.reps,
+    targetWeight: p.weight,
+    reps: p.reps,
+    weight: p.weight,
+    unit: settings.unit,
+    completed: false,
+    completedAt: null,
+  }));
+
+  const doomed = new Set(group.entries.map((e) => e.set.id));
+  const insertAt = Math.min(...group.entries.map((e) => e.index));
+  const kept = session.sets.filter((s) => !doomed.has(s.id));
+  const head = kept.slice(0, insertAt);
+  const tail = kept.slice(insertAt);
+
+  return [...head, ...replacements, ...tail].map((s, i) => ({ ...s, order: i }));
 }
 
 /**

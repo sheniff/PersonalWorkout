@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Sheet } from '../components/Sheet';
 import { Stepper } from '../components/Stepper';
 import { DELOAD_WEEK, TOTAL_PHASES, periodLabel } from '../data/program';
 import type { Unit } from '../data/types';
 import { isAbandoned } from '../lib/progression';
+import { convertWeight, roundToIncrement } from '../lib/units';
 import { cloudEnabled } from '../lib/supabase';
 import { useStore } from '../state/StoreContext';
 
@@ -58,6 +59,28 @@ export function Settings() {
 
   // The workout currently open is never a candidate, even before its first set.
   const abandoned = sessions.filter((s) => isAbandoned(s) && s.id !== activeSessionId);
+
+  const swapCount = Object.keys(settings.substitutions).length;
+  const plates = settings.unit === 'kg' ? settings.platesKg : settings.platesLb;
+  const [plateText, setPlateText] = useState(plates.join(', '));
+
+  // The field is free text while being edited; only valid numbers are kept.
+  useEffect(() => {
+    setPlateText(plates.join(', '));
+  }, [plates.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitPlates = () => {
+    const parsed = plateText
+      .split(/[,\s]+/)
+      .map((p) => Number.parseFloat(p.replace(',', '.')))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => b - a);
+    if (parsed.length === 0) {
+      setPlateText(plates.join(', '));
+      return;
+    }
+    setSettings(settings.unit === 'kg' ? { platesKg: parsed } : { platesLb: parsed });
+  };
 
   const download = () => {
     const blob = new Blob([exportData()], { type: 'application/json' });
@@ -118,12 +141,61 @@ export function Settings() {
                 key={u}
                 type="button"
                 aria-pressed={settings.unit === u}
-                onClick={() => setSettings({ unit: u })}
+                onClick={() => {
+                  if (settings.unit === u) return;
+                  // The bar itself is a real object, not a preference: carry its
+                  // weight across rather than leaving 20 kg reading as 20 lb.
+                  setSettings({
+                    unit: u,
+                    barWeight: roundToIncrement(
+                      convertWeight(settings.barWeight, settings.unit, u),
+                      u === 'kg' ? 2.5 : 5,
+                    ),
+                  });
+                }}
               >
                 {u}
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      <h3 className="section-title">Barbell and plates</h3>
+      <div className="card">
+        <div className="setting">
+          <div>
+            <div className="setting-label">Empty bar weight</div>
+            <div className="setting-help">
+              Used for the plate breakdown shown on barbell exercises.
+            </div>
+          </div>
+          <div style={{ width: 130 }}>
+            <Stepper
+              value={settings.barWeight}
+              onChange={(barWeight) => setSettings({ barWeight })}
+              step={settings.unit === 'kg' ? 2.5 : 5}
+              min={0}
+              max={50}
+              unit={settings.unit}
+              ariaLabel="Empty bar weight"
+            />
+          </div>
+        </div>
+        <div className="setting" style={{ display: 'block' }}>
+          <div className="setting-label">Plates you have ({settings.unit})</div>
+          <div className="setting-help" style={{ maxWidth: 'none' }}>
+            One side of the rack, separated by commas. Heaviest first is easiest to read.
+          </div>
+          <input
+            className="input"
+            type="text"
+            inputMode="decimal"
+            value={plateText}
+            onChange={(e) => setPlateText(e.target.value)}
+            onBlur={commitPlates}
+            style={{ marginTop: 10 }}
+          />
         </div>
       </div>
 
@@ -202,6 +274,24 @@ export function Settings() {
             label="Keep the screen awake"
           />
         </div>
+        {swapCount > 0 ? (
+          <div className="setting">
+            <div>
+              <div className="setting-label">Swapped exercises</div>
+              <div className="setting-help">
+                {swapCount} slot{swapCount === 1 ? '' : 's'} using something other than the
+                program's exercise.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn--sm btn--ghost"
+              onClick={() => setSettings({ substitutions: {} })}
+            >
+              Reset all
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <h3 className="section-title">Where you are in the program</h3>

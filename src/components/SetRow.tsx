@@ -11,6 +11,8 @@ interface SetRowProps {
   active: boolean;
   /** Column headings are drawn once per exercise, not once per row. */
   showLabels: boolean;
+  /** What this set was last time, e.g. "60×6". Hard sets only. */
+  previous?: string;
   onChange: (patch: Partial<Pick<SetLog, 'reps' | 'weight'>>) => void;
   onToggle: () => void;
 }
@@ -22,6 +24,7 @@ export function SetRow({
   label,
   active,
   showLabels,
+  previous,
   onChange,
   onToggle,
 }: SetRowProps) {
@@ -36,7 +39,14 @@ export function SetRow({
 
   return (
     <div className={classes.join(' ')} id={active && !set.completed ? 'active-set' : undefined}>
-      <div className="set-tag">{label}</div>
+      <div className="set-tag">
+        <span className="set-tag-label">{label}</span>
+        {previous ? (
+          <span className="set-prev num" title="Last time">
+            {previous}
+          </span>
+        ) : null}
+      </div>
 
       <div className="set-fields">
         {showWeight ? (
